@@ -4,11 +4,238 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Interactive Fantasy League Points Matrix showing match-by-match progression and rankings">
-    <link rel="icon" type="image/png" href="favicon.png">
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <title>Fantasy League Points Matrix</title>
-    // ... existing code ...
+    <style>
+        :root {
+            --bg-color: #1a1a1a;
+            --text-color: #ffffff;
+            --table-header-bg: #2d2d2d;
+            --table-cell-bg: #333333;
+            --table-hover-bg: #404040;
+            --border-color: #4a4a4a;
+            --highlight-color: #5c6bc0;
+            --positive-change: #4caf50;
+            --negative-change: #f44336;
+            --neutral-change: #9e9e9e;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 100%;
+            overflow-x: auto;
+            padding: 20px;
+        }
+
+        h1 {
+            text-align: center;
+            color: var(--text-color);
+            margin-bottom: 30px;
+        }
+
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            background-color: var(--table-cell-bg);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        th, td {
+            padding: 12px 15px;
+            text-align: center;
+            border: 1px solid var(--border-color);
+        }
+
+        th {
+            background-color: var(--table-header-bg);
+            font-weight: 600;
+            position: sticky;
+            top: 0;
+        }
+
+        tr:hover {
+            background-color: var(--table-hover-bg);
+        }
+
+        td:first-child {
+            background-color: var(--table-header-bg);
+            font-weight: 600;
+            position: sticky;
+            left: 0;
+            z-index: 1;
+        }
+
+        td:last-child {
+            background-color: var(--highlight-color);
+            font-weight: 600;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            font-size: 1.2em;
+        }
+
+        .cell-content {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .match-points {
+            font-size: 1.2em;
+            font-weight: bold;
+        }
+
+        .match-rank {
+            color: #bbb;
+        }
+
+        .overall-points {
+            font-weight: bold;
+        }
+
+        .rank-change {
+            font-size: 0.9em;
+            padding: 2px 4px;
+            border-radius: 3px;
+        }
+
+        .rank-up {
+            color: var(--positive-change);
+        }
+
+        .rank-down {
+            color: var(--negative-change);
+        }
+
+        .rank-same {
+            color: var(--neutral-change);
+        }
+    </style>
 </head>
 <body>
-    // ... existing code ...
+    <div class="container">
+        <h1>Fantasy League Points Matrix</h1>
+        <div id="matrix"></div>
+    </div>
+
+    <script>
+        async function fetchJSON(url) {
+            const response = await fetch(url);
+            return response.json();
+        }
+
+        function getRankChange(currentRank, previousRank) {
+            if (!previousRank) return { text: 'NEW', class: 'rank-same' };
+            const change = previousRank - currentRank;
+            if (change > 0) return { text: `↑${change}`, class: 'rank-up' };
+            if (change < 0) return { text: `↓${Math.abs(change)}`, class: 'rank-down' };
+            return { text: '=', class: 'rank-same' };
+        }
+
+        function calculateRanks(matchStats) {
+            const participants = Object.keys(matchStats);
+            const ranks = {};
+            
+            participants.sort((a, b) => 
+                (matchStats[b].cumulative_points || 0) - (matchStats[a].cumulative_points || 0)
+            );
+            
+            let currentRank = 1;
+            let previousPoints = null;
+            let rankOffset = 0;
+            
+            participants.forEach((participant, index) => {
+                const points = matchStats[participant].cumulative_points || 0;
+                if (previousPoints !== null && points < previousPoints) {
+                    currentRank = index + 1;
+                }
+                ranks[participant] = currentRank;
+                previousPoints = points;
+            });
+            
+            return ranks;
+        }
+
+        async function loadData() {
+            try {
+                const finalStats = await fetchJSON('02_processed_data/02_overall_stats/after_match_15.json');
+                
+                const participants = Object.keys(finalStats).sort((a, b) => {
+                    return (finalStats[b].cumulative_points || 0) - (finalStats[a].cumulative_points || 0);
+                });
+                
+                const matchCount = 15;
+
+                let table = '<table><thead><tr><th>Participant</th>';
+                for (let i = 1; i <= matchCount; i++) {
+                    table += `<th>Match ${i}</th>`;
+                }
+                table += '<th>Total</th></tr></thead><tbody>';
+
+                let previousRanks = {};
+
+                for (const participant of participants) {
+                    table += `<tr><td>${participant}</td>`;
+                    
+                    for (let match = 1; match <= matchCount; match++) {
+                        const matchStats = await fetchJSON(`02_processed_data/02_overall_stats/after_match_${String(match).padStart(2, '0')}.json`);
+                        const previousMatchStats = match > 1 ? 
+                            await fetchJSON(`02_processed_data/02_overall_stats/after_match_${String(match-1).padStart(2, '0')}.json`) : 
+                            null;
+
+                        const currentPoints = matchStats[participant]?.cumulative_points || 0;
+                        const previousPoints = previousMatchStats ? 
+                            (previousMatchStats[participant]?.cumulative_points || 0) : 0;
+                        const matchPoints = currentPoints - previousPoints;
+
+                        const currentRanks = calculateRanks(matchStats);
+                        const currentRank = currentRanks[participant];
+
+                        const rankChange = getRankChange(currentRank, previousRanks[participant]);
+                        previousRanks[participant] = currentRank;
+
+                        table += `
+                            <td>
+                                <div class="cell-content">
+                                    <div class="match-points">+${matchPoints}</div>
+                                    <div class="match-rank">Rank: ${currentRank}</div>
+                                    <div class="overall-points">${currentPoints} pts</div>
+                                    <div class="rank-change ${rankChange.class}">${rankChange.text}</div>
+                                </div>
+                            </td>`;
+                    }
+
+                    const finalRanks = calculateRanks(finalStats);
+                    table += `
+                        <td>
+                            <div class="cell-content">
+                                <div class="overall-points">${finalStats[participant].cumulative_points}</div>
+                                <div class="match-rank">Final Rank: ${finalRanks[participant]}</div>
+                            </div>
+                        </td></tr>`;
+                }
+
+                table += '</tbody></table>';
+                document.getElementById('matrix').innerHTML = table;
+            } catch (error) {
+                console.error('Error loading data:', error);
+                document.getElementById('matrix').innerHTML = '<div class="loading">Error loading data. Please check the console for details.</div>';
+            }
+        }
+
+        document.getElementById('matrix').innerHTML = '<div class="loading">Loading data...</div>';
+        loadData();
+    </script>
 </body>
 </html> 
